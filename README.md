@@ -1,5 +1,7 @@
 # libmsauth
-An authentication library for MapleStory written in C#. Authenticates accounts and obtains the passport token to spawn a new MapleStory instance or authorize a login attempt.
+An authentication library for MapleStory written in C#. Authenticates accounts and obtains the passport token to spawn a new MapleStory instance or authorize a login attempt. 
+
+libmsauth currently only supports Web Authentication and Authorisation. Authentication and authorisation through NMCO*.dll's is not yet supported.
 
 ## Example
 ```csharp
