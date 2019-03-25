@@ -40,10 +40,20 @@ namespace libmsauth.Methods
         public static Uri PassportUri => new Uri("https://api.nexon.io/users/me/passport");
 
         /// <summary>
+        /// The location ofthe ticket resource
+        /// </summary>
+        private static Uri TicketUri => new Uri("https://api.nexon.io/game-auth/v2/ticket");
+
+        /// <summary>
         /// The location of the default domain used for the cookie container
         /// </summary>
         public static Uri HomeUri => new Uri("https://nexon.net/");
         #endregion
+
+        /// <summary>
+        /// The User Agent to use for all API communication.
+        /// </summary>
+        private string UserAgent { get; set; }
 
         /// <summary>
         /// A token obtained after succesfully authenticating against the Nexon.com web API
@@ -54,6 +64,23 @@ namespace libmsauth.Methods
         /// A token obtained after successfully authorising against the Nexon.com web API
         /// </summary>
         private NexonToken AccessToken { get; set; }
+
+        /// <summary>
+        /// Constructs a WebAuthentication instance using a preconfigured user agent.
+        /// </summary>
+        public WebAuthentication()
+        {
+            UserAgent = "NexonLauncher.nxl-18.13.13-62-f86a181-coreapp-2.1.0";
+        }
+
+        /// <summary>
+        /// Constructs a WebAuthentication instance using a custom user agent.
+        /// </summary>
+        /// <param name="userAgent">The custom user agent to use.</param>
+        public WebAuthentication(string userAgent)
+        {
+            UserAgent = userAgent;
+        }
 
         /// <summary>
         /// Obtains the Nexon Passport Token from Nexon's Web API
@@ -69,12 +96,22 @@ namespace libmsauth.Methods
         }
 
         /// <summary>
+        /// Obtains the Login Ticket from Nexon's Web API
+        /// </summary>
+        /// <returns></returns>
+        public async Task<string> GetLoginTicket(string email, string password)
+        {
+            await Authenticate(email, password, false);
+
+            return await GetTicket();
+        }
+
+        /// <summary>
         /// Authenticates against Nexon's home page in order to obtain authorisation tokens for further home / API usage.
         /// </summary>
         /// <param name="email">The e-mail to identify with</param>
         /// <param name="pw">The password to authenticate with</param>
         /// <param name="spoofDeviceId">Indicates whether the Device Identifier should be legitimate or spoofed</param>
-        /// <returns></returns>
         private async Task Authenticate(string email, string pw, bool spoofDeviceId)
         {
             byte[] passwordHash, deviceHash;
@@ -100,7 +137,7 @@ namespace libmsauth.Methods
             {
                 int time = DateTime.UtcNow.Millisecond;
 
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) NexonLauncher/28.6.0 Chrome/66.0.3359.181 Electron/3.0.4 Safari/537.36");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
                 client.DefaultRequestHeaders.Add("Origin", "https://www.nexon.com");
                 client.DefaultRequestHeaders.Referrer = new Uri($"https://www.nexon.com/account/en/login?ts={time}");
                 client.DefaultRequestHeaders.AcceptEncoding.ParseAdd("gzip, deflate");
@@ -112,7 +149,7 @@ namespace libmsauth.Methods
                     {
                         id = email,
                         password = string.Concat(passwordHash.Select(b => b.ToString("X2"))).ToLower(),
-                        client_id = "7853644408",
+                        client_id = "7853644408", // Static
                         device_id = string.Concat(deviceHash.Select(b => b.ToString("X2"))).ToLower(), //Might be a better idea to spoof the device_id
                         scope = "us.launcher.all",
                         auto_login = false
@@ -131,6 +168,7 @@ namespace libmsauth.Methods
                         id_token = "",
                         access_token = "",
                         user_no = 0,
+                        hashed_user_no = "",
                         id_token_expires_in = default(uint),
                         access_token_expires_in = default(uint),
                         is_verified = default(bool),
@@ -169,7 +207,7 @@ namespace libmsauth.Methods
             var filter = new HttpClientHandler();
             using (var client = new HttpClient(filter))
             {
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("NexonLauncher.nxl-18.12.01-378-2d210e0");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("bearer", Convert.ToBase64String(Encoding.UTF8.GetBytes(AccessToken.Value)));
                 filter.CookieContainer.Add(HomeUri, new Cookie("nxtk", AccessToken.Value));
 
@@ -202,6 +240,44 @@ namespace libmsauth.Methods
             });
 
             return new NexonPassport(result.passport);
+        }
+
+        private async Task<string> GetTicket()
+        {
+            string json = await Task.Factory.StartNew(() =>
+            {
+                return JsonConvert.SerializeObject(new
+                {
+                    id_token = IdentityToken.Value,
+                    product_id = "10100",
+                    device_id = string.Concat(GetDeviceId().Select(b => b.ToString("X2"))).ToLower()
+                });
+            });
+
+            using (HttpClient client = new HttpClient())
+            {
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("bearer", AccessToken.Value);
+
+                StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                HttpResponseMessage response = await client.PostAsync(TicketUri, content).ConfigureAwait(false);
+                string responseContent = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+                if(response.IsSuccessStatusCode)
+                {
+                    var result = JsonConvert.DeserializeAnonymousType(responseContent, new
+                    {
+                        ticket = "",
+                    });
+
+                    return result.ticket;
+                }
+                else
+                {
+                    throw new WebAuthenticationException(WebAuthenticationErrorCodes.HttpError, "Failed to obtain ticket");
+                }
+            }
         }
 
         /// <summary>
